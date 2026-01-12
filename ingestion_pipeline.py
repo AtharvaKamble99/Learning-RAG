@@ -1,40 +1,81 @@
 import os
-import langchain_community.document_loaders import TextLoader , DirectoryLoader
-from langchain_text_splitters import CharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
-from langchain_chroma import Chroma
+from sentence_transformers import SentenceTransformer 
+# import langchain_community.document_loaders import TextLoader , DirectoryLoader
+# from langchain_text_splitters import CharacterTextSplitter
+# from langchain_openai import OpenAIEmbeddings
+# from langchain_chroma import Chroma
 from dotenv import load_dotenv
-
 load_dotenv()
+import chromadb
+from chromadb.config import Settings
+from chromadb import PersistentClient
 
 
-def load_documents(docs_path="docs"):
-    print(f"Loading documents from {docs_path}...")
+#CONFIG
 
-    if not os.path.exists(docs_path):
-        raise FileNotFoundError(f"The directory {docs_path} does not exists . Please create one ")
-    
+MODEL_NAME= os.getenv("MODEL_NAME")
+DOC_DIR= os.getenv("DOC_DIR")
+CHUNK_SIZE= int(os.getenv("CHUNK_SIZE"))
+CHUNK_OVERLAP= int(os.getenv("CHUNK_OVERLAP"))
 
-    loader = DirectoryLoader(
-        path=docs_path
-        glob="*.txt"
-        loader_cls=TextLoader
+print(f"Using model: {MODEL_NAME}")
+
+#CHROMA DB SETUP 
+#CHROMA DB SETUP 
+chroma_db_path = os.path.join(os.path.dirname(__file__), "chroma_db")
+client = PersistentClient(
+    path=chroma_db_path,
+    settings=Settings(
+        anonymized_telemetry=False
     )
+)
+collection  = client.get_or_create_collection(
+    name="documents",
+    metadata={"embedding_model":MODEL_NAME}
+)
 
-    documents=loader.load()
+def chunk_text(text, size, overlap):
+    chunks=[]
+    start=0
+    while start < len(text):
+        end=start+size
+        chunks.append(text[start:end])
+        start=end-overlap
 
-    if len(documents) ==0 :
-        raise FileNotFoundError(f"No .txt file found in {docs_path} .")
+    return chunks
+
+
+
+model = SentenceTransformer(MODEL_NAME)
+
+
+for filename in os.listdir(DOC_DIR):
+    print(f"Processing file: {filename}")
+    if not filename.endswith(".txt"):
+        continue
+
+    filepath= os.path.join(DOC_DIR,filename)
+
+    with open(filepath,'r',encoding="utf-8") as f:
+        text=f.read()
+        
+    chunks=chunk_text(text,CHUNK_SIZE,CHUNK_OVERLAP)
+
+    embeddings= model.encode(chunks).tolist()
+
+    ids=[f"{filename}_chunk_{i}" for i in range(len(chunks))]
+    metadata=[{"source" : filename} for _ in chunks]
+
+    collection.add(
+        documents=chunks,
+        embeddings=embeddings,
+        metadatas=metadata,
+        ids=ids
+    )
+    
     
 
 
-    for i,doc in enumerate(documents[:2]):
-        print(f"\nDocument {i+1}")
-        print(f"Source : {doc.metadata['source']}")
-        print(f"Content length : {len(doc.page_content)} characters ")
-        print(f"Content Preview : {doc.page_content{:100}}...")
-        print(f"metadata : {doc.metadata}" )
 
-        return documents
         
 
